@@ -2,7 +2,7 @@
 
 This is an open-source library for deep learning researchers, especially for spatial-temporal forecasting.
 
-We provide a neat code base to evaluate advanced spatial-temporal model or develop your model.
+We provide a neat code base to evaluate advanced spatial-temporal models or develop your model.
 
 
 
@@ -99,7 +99,7 @@ We have provided all the experimental scripts for the benchmarks in the `./scrip
 
 ## 📧Contact
 
-For any questions or feedback, feel free to contact [Liwei Deng](mailto:liweidengdavid@gmail.com).
+For any questions or feedback, feel free to contact [Liwei Deng](mailto:liweidengdavid@gmail.com) and [Junhao Tan](mailto:827092078@qq.com).
 
 
 
