@@ -67,7 +67,7 @@ pip install -r requirements.txt
 
 # 👉Data Preparation<a href='#all_catelogue'>[Back to Top]</a>
 
-We follow the same setting as previous work. The datasets for all the four benchmarks can be obtained from [Google Drive](https://drive.google.com/drive/folders/1lcv-QYH7nAk9ciGFOurSam6SJVWaW-lg?usp=sharing). The datasets are placed in the `datasets` folder of our project. The tree structure of the files is as follows:
+The Los Angeles traffic speed files (METR-LA) and the Bay Area traffic speed files (PEMS-BAY), as well as the Los Angeles traffic flow files (PEMS04 and PEMS08), can be accessed and downloaded from [Google Drive](https://drive.google.com/drive/folders/1lcv-QYH7nAk9ciGFOurSam6SJVWaW-lg?usp=sharing). Please place these files in the `datasets/` folder. The tree structure of the files is as follows:
 
 ```
 \datasets
