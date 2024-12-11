@@ -7,11 +7,16 @@ import numpy as np
 from layers.WAVGCRN_related import *
 import sys
 import pywt
+import time
+import scipy.linalg as slin
+import scipy.optimize as sopt
+from scipy.special import expit as sigmoid
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class WavGCRN(nn.Module):
-    def __init__(self,gcn_depth,num_nodes,predefined_A=None,seq_length=12,out_dim=3,in_dim=3,output_dim=12,
-                 list_weight=[0.05, 0.95, 0.95],cl_decay_steps=4000,hidden_size=64,level=1,points_per_hour=12):
+    def __init__(self,batch_size, gcn_depth,num_nodes,predefined_A=None,seq_length=12,out_dim=3,in_dim=3,output_dim=12,
+                 list_weight=[0.05, 0.95, 0.95],cl_decay_steps=4000,hidden_size=64,level=1,points_per_hour=12,cl=True):
         super(WavGCRN, self).__init__()
         self.output_dim = output_dim
         self.num_nodes = num_nodes
@@ -19,6 +24,11 @@ class WavGCRN(nn.Module):
         self.level = level
         self.points_per_hour = points_per_hour
         self.predefined_A = predefined_A
+        self.device = predefined_A[0].device
+        self.batch_size = batch_size
+        self.adj1, self.adj2 = predefined_A[0].unsqueeze(0).repeat(batch_size, 1, 1), predefined_A[0].unsqueeze(0).repeat(batch_size, 1, 1)
+        self.emb1, self.emb2 = 0, 0
+        self.cl = cl
 
         self.seq_length = seq_length
 
@@ -105,7 +115,7 @@ class WavGCRN(nn.Module):
         x = x.transpose(1, 2).contiguous()  # b,n,c
 
         adp = self.preprocessing(torch.tensor(md), predefined_A[0])
-        adpT = self.preprocessing(torch.tensor(md).transpose(0, 1), predefined_A[0])
+        adpT = self.preprocessing(torch.tensor(md), predefined_A[0])
 
         if type == 'encoder':
             Hidden_State = Hidden_State.view(-1, self.num_nodes, self.hidden_size)
@@ -176,7 +186,7 @@ class WavGCRN(nn.Module):
             t = T_ds[..., i]  # b,c,n (此处c=1)
             x1 = torch.cat((x1, t), dim=1)
             Hidden_State_1, Cell_State_1 = self.step(x1, Hidden_State_1, Cell_State_1,
-                                                     predefined_A, adj, 'D', 'encoder')
+                                                     predefined_A, self.adj1, 'D', 'encoder')
         Hidden_State.append(Hidden_State_1)
         Cell_State.append(Cell_State_1)
 
@@ -185,7 +195,7 @@ class WavGCRN(nn.Module):
             t = T_ds[..., i]  # b,c,n (此处c=1)
             x2 = torch.cat((x2, t), dim=1)
             Hidden_State_2, Cell_State_2 = self.step(x2, Hidden_State_2, Cell_State_2,
-                                                     predefined_A, adj, 'AD', 'encoder')
+                                                     predefined_A, self.adj2, 'AD', 'encoder')
         Hidden_State.append(Hidden_State_2)
         Cell_State.append(Cell_State_2)
 
@@ -216,7 +226,7 @@ class WavGCRN(nn.Module):
             decoder_input = torch.cat([decoder_input.to(device), timeofday[..., i].to(device)], dim=1)
 
             Hidden_State, Cell_State = self.step(decoder_input, Hidden_State, Cell_State,
-                                                 predefined_A, adj, None,
+                                                 predefined_A, predefined_A[0].unsqueeze(0).repeat(self.batch_size, 1, 1), None,
                                                  'decoder')
 
             Hidden_State, Cell_State = Hidden_State.view(-1, self.hidden_size), Cell_State.view(
@@ -239,7 +249,134 @@ class WavGCRN(nn.Module):
                                            self.out_dim,
                                            self.output_dim)
         outputs_final=outputs_final.permute(0, 2, 1, 3) #（B,C,N,L）
+
+        self.emb1, self.emb2 = Hidden_State_1[0, :, :].transpose(0, 1).clone().detach().cpu().numpy(), \
+        Hidden_State_2[0, :, :].transpose(0, 1).clone().detach().cpu().numpy()
+
         return outputs_final
+
+    def notears_linear(self, X, lambda1, loss_type, max_iter=100, h_tol=1e-8, rho_max=1e+16, w_threshold=0.0001):
+        """Solve min_W L(W; X) + lambda1 ‖W‖_1 s.t. h(W) = 0 using augmented Lagrangian.
+
+        Args:
+            X (np.ndarray): [n, d] sample matrix
+            lambda1 (float): l1 penalty parameter
+            loss_type (str): l2, logistic, poisson
+            max_iter (int): max num of dual ascent steps
+            h_tol (float): exit if |h(w_est)| <= htol
+            rho_max (float): exit if rho >= rho_max
+            w_threshold (float): drop edge if |weight| < threshold
+
+        Returns:
+            W_est (np.ndarray): [d, d] estimated DAG
+        """
+
+        def _loss(W):
+            """Evaluate value and gradient of loss."""
+            M = X @ W
+            if loss_type == 'l2':
+                R = X - M
+                loss = 0.5 / X.shape[0] * (R ** 2).sum()
+                G_loss = - 1.0 / X.shape[0] * X.T @ R
+            elif loss_type == 'logistic':
+                loss = 1.0 / X.shape[0] * (np.logaddexp(0, M) - X * M).sum()
+                G_loss = 1.0 / X.shape[0] * X.T @ (sigmoid(M) - X)
+            elif loss_type == 'poisson':
+                S = np.exp(M)
+                loss = 1.0 / X.shape[0] * (S - X * M).sum()
+                G_loss = 1.0 / X.shape[0] * X.T @ (S - X)
+            else:
+                raise ValueError('unknown loss type')
+            return loss, G_loss
+
+        def _h(W):
+            """Evaluate value and gradient of acyclicity constraint."""
+            E = slin.expm(W * W)  # (Zheng et al. 2018)
+            h = np.trace(W)
+            #     # A different formulation, slightly faster at the cost of numerical stability
+            #     M = np.eye(d) + W * W / d  # (Yu et al. 2019)
+            #     E = np.linalg.matrix_power(M, d - 1)
+            #     h = (E.T * M).sum() - d
+            G_h = E.T * W * 2
+            return h, G_h
+
+        def _adj(w):
+            """Convert doubled variables ([2 d^2] array) back to original variables ([d, d] matrix)."""
+            return (w[:d * d] - w[d * d:]).reshape([d, d])
+
+        def _func(w):
+            """Evaluate value and gradient of augmented Lagrangian for doubled variables ([2 d^2] array)."""
+            W = _adj(w)
+            loss, G_loss = _loss(W)
+            h, G_h = _h(W)
+            obj = loss + 0.5 * rho * h * h + alpha * h + lambda1 * w.sum()
+            G_smooth = G_loss + (rho * h + alpha) * G_h
+            g_obj = np.concatenate((G_smooth + lambda1, - G_smooth + lambda1), axis=None)
+            return obj, g_obj
+
+        n, d = X.shape
+        w_est, rho, alpha, h = np.random.rand(2 * d * d), 1.0, 0.0, np.inf  # double w_est into (w_pos, w_neg)
+        bnds = [(0, 0) if i == j else (0, None) for _ in range(2) for i in range(d) for j in range(d)]
+        if loss_type == 'l2':
+            X = X - np.mean(X, axis=0, keepdims=True)
+
+        for _ in range(max_iter):
+            w_new, h_new = None, None
+            while rho < rho_max:
+                sol = sopt.minimize(_func, w_est, method='L-BFGS-B', jac=True, bounds=bnds)
+                w_new = sol.x
+                # print("w_new: ", w_new.sum())
+                h_new, _ = _h(_adj(w_new))
+                if h_new > 0.25 * h:
+                    rho *= 10
+                else:
+                    break
+            # print("change: ", (w_new-w_est).sum())
+            w_est, h = w_new, h_new
+            alpha += rho * h
+            if h <= h_tol or rho >= rho_max:
+                break
+        W_est = _adj(w_est)
+        print("learned graph: ", W_est.sum(), np.max(W_est))
+        # W_est[np.abs(W_est) < w_threshold] = 0
+        # print(W_est)
+        # print(W_est.sum())
+        return torch.from_numpy(W_est).to(self.device)
+
+    def graph_learning(self):
+
+        if self.cl:
+
+            t1 = time.time()
+            print("what about input1: ", (self.emb1 - np.mean(self.emb1)).sum())
+            self.adj1 = self.notears_linear(X=self.emb1, lambda1=0.1, loss_type='l2').unsqueeze(0).repeat(self.batch_size, 1, 1).float()
+            # if self.adj1.sum() < 0.00001:
+            # print("repeat")
+            # b=self.notears_linear(X=embedding_feature1, lambda1=0.1, loss_type='l2').unsqueeze(0).repeat(self.batch_size, 1, 1)
+            # print("add uniform")
+            # embedding_feature1 += np.random.uniform(0.0, 1e-11, (64,207))
+            # a=self.notears_linear(X=embedding_feature1, lambda1=0.1, loss_type='l2').unsqueeze(0).repeat(self.batch_size, 1, 1).float()
+            # print("pure uniform")
+            # embedding_feature1 = np.random.uniform(0.0, 1e-11, (64,207))
+            # c=self.notears_linear(X=embedding_feature1, lambda1=0.1, loss_type='l2').unsqueeze(0).repeat(self.batch_size, 1, 1).float()
+            t2 = time.time()
+            print("first graph learning time cost: ", t2 - t1)
+            print("what about input2: ", (self.emb2 - np.mean(self.emb2)).sum())
+            t1 = time.time()
+            self.adj2 = self.notears_linear(X=self.emb2, lambda1=0.1, loss_type='l2').unsqueeze(0).repeat(self.batch_size,
+                                                                                                                   1,
+                                                                                                                   1).float()
+            # print("add uniform2")
+            # embedding_feature2 += np.random.uniform(0.0, 1e-11, (64,207))
+            # a=self.notears_linear(X=embedding_feature1, lambda1=0.1, loss_type='l2').unsqueeze(0).repeat(self.batch_size, 1, 1).float()
+            t2 = time.time()
+            print("second graph learning time cost: ", t2 - t1)
+
+        else:
+
+            self.adj1 = self.notears_linear(X=self.emb1, lambda1=0.1, loss_type='l2').unsqueeze(0).repeat(self.batch_size, 1, 1).float()
+            self.adj2 = self.notears_linear(X=self.emb2, lambda1=0.1, loss_type='l2').unsqueeze(0).repeat(self.batch_size, 1, 1).float()
+
 
     def initHidden(self, batch_size, hidden_size):
         Hidden_State = Variable(
