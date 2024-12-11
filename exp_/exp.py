@@ -240,10 +240,10 @@ class EXP():
                                  input_len=args.seq_len,output_len=args.pred_len,  points_per_hour=args.points_per_hour, dropout=0.1)
 
         elif args.model_name == 'TESTAM':
-            self.model = TESTAM(args.num_nodes, args.seq_len, dropout=0.3, in_dim=args.num_features, out_dim=args.pred_len, hidden_size=32, layers=3, points_per_hour=args.points_per_hour)
+            self.model = TESTAM(args.num_features, args.num_nodes, args.seq_len, dropout=0.3, in_dim=args.num_features, out_dim=args.pred_len, hidden_size=32, layers=3, points_per_hour=args.points_per_hour)
 
         elif args.model_name == 'WAVGCRN':
-            self.model = WavGCRN(gcn_depth=2,num_nodes=args.num_nodes,predefined_A=[adj],seq_length=args.seq_len,out_dim=args.num_features,
+            self.model = WavGCRN(batch_size=args.batch_size, gcn_depth=2,num_nodes=args.num_nodes,predefined_A=[adj],seq_length=args.seq_len,out_dim=args.num_features,
                  in_dim=args.num_features,output_dim=args.pred_len,list_weight=[0.05, 0.95, 0.475],cl_decay_steps=2000,
                  hidden_size=64,points_per_hour=args.points_per_hour)
 
@@ -301,7 +301,7 @@ class EXP():
             # TODO 模型的输入和输出的维度都是(B,C,N,L).输出的特征维度默认为1
             self.adj = np.array(self.adj)# 如果不是array，那么送入model的时候第一个维度会被分成两半
             pred = self.model(seqs,self.adj,seqs_time=seqs_time,targets_time=targets_time,targets=targets,mode=mode,index=index,epoch=epoch)  # 输入模型
-            if args.model_name=='MegaCRN' and mode=='train':
+            if (args.model_name=='MegaCRN' or args.model_name=='TESTAM') and mode=='train':
                 pred,loss_part=pred[0],pred[1]
 
             # 计算损失 TODO 默认计算的是第一个特征维度
@@ -321,7 +321,7 @@ class EXP():
             save_manager.save_step_log(mode, **step_logs)  # 保存每一个batch的训练loss
 
             if mode == 'train':
-                if args.model_name=='MegaCRN':
+                if args.model_name=='MegaCRN' or args.model_name=='TESTAM':
                     loss=loss+loss_part
                 loss.backward()
                 # 梯度裁剪
@@ -329,6 +329,10 @@ class EXP():
                     nn.utils.clip_grad.clip_grad_norm_(self.model.parameters(), args.clip_max_norm)
                 self.optimizer.step()
                 self.optimizer.zero_grad()
+
+        if mode == 'train':
+            if args.model_name == 'WAVGCRN':
+                self.model.graph_learning()
 
         epoch_logs = metric_logger.get_finish_epoch_logs()
         epoch_logs['epoch'] = epoch
