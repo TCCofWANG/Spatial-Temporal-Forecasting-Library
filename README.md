@@ -99,7 +99,7 @@ We have provided all the experimental scripts for the benchmarks in the `./scrip
 
 ## 📧Contact
 
-For any questions or feedback, feel free to contact [Liwei Deng](mailto:liweidengdavid@gmail.com).
+For any questions or feedback, feel free to contact [Liwei Deng](mailto:liweidengdavid@gmail.com) or [Junhao Tan](mailto:827092078@qq.com).
 
 
 
