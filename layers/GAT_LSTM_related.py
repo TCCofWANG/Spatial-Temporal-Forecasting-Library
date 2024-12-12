@@ -28,7 +28,7 @@ class GATConv(nn.Module):
         wh1 = torch.einsum('bivl,io->bovl', wh, self.a[:self.out_channels, :])
         wh2 = torch.einsum('bivl,io->bovl', wh, self.a[self.out_channels:, :])
         e = wh1 + wh2 #(B,N,N,seq_len)
-
+        adj = adj.to(e.device)
         e = self.leaky_relu(e)
         attention = torch.where(adj[None, ..., None] > 1e-6, e, -1e10)
 
