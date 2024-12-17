@@ -53,9 +53,9 @@ def build_dataloader(args, test=False):
         val_dataset = scaler.transform(val_dataset.reshape(-1,num_features))
         test_dataset = scaler.transform(test_dataset.reshape(-1,num_features))
 
-        train_dataset = train_dataset.reshape(train_len,num_features,num_nodes)
-        val_dataset = val_dataset.reshape(val_len, num_features,num_nodes)
-        test_dataset = test_dataset.reshape(test_len, num_features,num_nodes)
+        train_dataset = np.transpose(train_dataset.reshape(train_len, num_nodes,num_features),(0,2,1))
+        val_dataset = np.transpose(val_dataset.reshape(val_len, num_nodes, num_features),(0,2,1))
+        test_dataset = np.transpose(test_dataset.reshape(test_len, num_nodes, num_features),(0,2,1))
         mean = scaler.mean_.reshape(1, num_features,1)
         std = scaler.scale_.reshape(1, num_features,1)
 
@@ -69,9 +69,9 @@ def build_dataloader(args, test=False):
         val_dataset = scaler.transform(val_dataset.reshape(-1,num_features))
         test_dataset = scaler.transform(test_dataset.reshape(-1,num_features))
 
-        train_dataset = train_dataset.reshape(train_len, num_features, num_nodes)
-        val_dataset = val_dataset.reshape(val_len, num_features, num_nodes)
-        test_dataset = test_dataset.reshape(test_len, num_features, num_nodes)
+        train_dataset = np.transpose(train_dataset.reshape(train_len,num_nodes,num_features),(0,2,1))
+        val_dataset = np.transpose(val_dataset.reshape(val_len,num_nodes,num_features),(0,2,1))
+        test_dataset = np.transpose(test_dataset.reshape(test_len,num_nodes,num_features),(0,2,1))
 
         min_values = scaler.data_min_.reshape(1, num_features,1)
         max_values = scaler.data_max_.reshape(1, num_features,1)
@@ -80,18 +80,6 @@ def build_dataloader(args, test=False):
         test_dataset = SubwayDataset(test_dataset, test_time_dataset, args.seq_len, args.pred_len, max=max_values,min=min_values)
     else:
         assert print("数据集规范化未定义")
-
-
-    # TODO 以下是不同的站点和不同的特征服从的分布不同(虽然这样更符合实际，但是这样测试到效果还原不了原paper的结果)
-    # train_dataset = scaler.fit_transform(train_dataset.reshape(len(train_dataset), -1))  # 将站点和特征融起来
-    # val_dataset = scaler.transform(val_dataset.reshape(len(val_dataset), -1))  # 使用训练集的均值和方差进行转换
-    # test_dataset = scaler.transform(test_dataset.reshape(len(test_dataset), -1))  # 使用训练集的均值和方差进行转换
-    #
-    # train_dataset = train_dataset.reshape(len(train_dataset),num_features,num_nodes)
-    # val_dataset = val_dataset.reshape(len(val_dataset), num_features,num_nodes)
-    # test_dataset = test_dataset.reshape(len(test_dataset), num_features,num_nodes)
-    # mean = scaler.mean_.reshape(1, num_features,num_nodes)  # 表示将对仅仅时间维度进行标准化
-    # std = scaler.scale_.reshape(1, num_features,num_nodes)
 
 
     if not isinstance(adj, torch.Tensor):
