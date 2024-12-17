@@ -7,7 +7,6 @@ from sklearn.preprocessing import StandardScaler,MinMaxScaler
 from torch.utils import data
 from data.dataset import split_dataset,SubwayDataset
 
-
 '''切分数据集和创建dataloader'''
 def build_dataloader(args, test=False):
     '''训练集，验证集，测试集=6:2:2 or 7:1:2，训练集和验证集同分布，但是训练集和测试集不是同分布'''
@@ -127,8 +126,6 @@ def build_dataloader(args, test=False):
         train_dataloader.min, val_dataloader.min, test_dataloader.min = min, min, min
         train_dataloader.max, val_dataloader.max, test_dataloader.max = max, max, max
     return adj, train_dataloader, val_dataloader, test_dataloader, train_sampler, val_sampler, test_sampler
-
-
 
 
 
