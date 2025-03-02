@@ -21,10 +21,11 @@ class GCRN(nn.Module):
 
         h = x.contiguous()
         out = [h]
+        batch_size = x.shape[0]
 
         for _ in range(self.gdep):
                 h = self.alpha * x.to(device) + \
-                    self.beta * torch.einsum('bnc,bnw->bwc', (h.to(device), supports[0].to(device))) + \
+                    self.beta * torch.einsum('bnc,bnw->bwc', (h.to(device), supports[0][:batch_size].to(device))) + \
                     self.gamma * torch.einsum('bnc,nw->bwc', (h.to(device), supports[1].to(device)))
                 out.append(h.to(device))
 
