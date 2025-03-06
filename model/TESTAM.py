@@ -31,7 +31,7 @@ class TESTAM(nn.Module):
         self.gate_network = MemoryGate(hidden_size, num_nodes, input_dim=in_dim)
 
         self.output_linear = nn.Linear(seq_len,out_dim)
-        self.dim_linear = nn.Linear(1, num_features)
+#        self.dim_linear = nn.Linear(1, num_features)
 
         for model in [self.identity_expert, self.adaptive_expert, self.attention_expert]:
             for n, p in model.named_parameters():
@@ -55,12 +55,11 @@ class TESTAM(nn.Module):
             return loss
 
     def get_quantile_label(self, gated_loss, gate, real):
-        gated_loss = gated_loss
-        real = real
+        gated_loss = gated_loss.unsqueeze(1)
         max_quantile = gated_loss.quantile(self.quantile)
         min_quantile = gated_loss.quantile(1 - self.quantile)
         incorrect = (gated_loss > max_quantile).expand_as(gate)
-        correct = ((gated_loss < min_quantile) & (real > self.threshold)).expand_as(gate)
+        correct = ((gated_loss < min_quantile) & (real[:, :1, :, :].unsqueeze(1) > self.threshold)).expand_as(gate)
         cur_expert = gate.argmax(dim=1, keepdim=True)
         not_chosen = gate.topk(dim=1, k=2, largest=False).indices
         selected = torch.zeros_like(gate).scatter_(-1, cur_expert, 1.0)
@@ -93,22 +92,19 @@ class TESTAM(nn.Module):
         return l_worst_avoidance, l_best_choice
 
     def loss(self, predict, gate, res, real, epoch):
-        real = real.unsqueeze(1)
-        res = res.permute(0, 4, 1, 2, 3)
-        res = self.dim_linear(res).permute(0, 1, 4, 2, 3)
+        res = res.permute(0, 4, 3, 1, 2)
         res = self.output_linear(res)
-        gate = gate.unsqueeze(-1).permute(0, 3, 1, 2, 4)
-        gate = self.dim_linear(gate).permute(0, 1, 4, 2, 3)
+        gate = gate.unsqueeze(-1).permute(0, 3, 4, 1, 2)
         gate = self.output_linear(gate)
-        ind_loss = self.masked_mae(res, real, self.threshold, reduce=None)
+        ind_loss = self.masked_mae(res, real[:, :1, :, :].unsqueeze(1), self.threshold, reduce=None)
         if self.flag:
-            gated_loss = self.masked_mae(predict, real.squeeze(1), reduce=None).unsqueeze(2)
+            gated_loss = self.masked_mae(predict, real[:, :1, :, :], reduce=None)
             l_worst_avoidance, l_best_choice = self.get_quantile_label(gated_loss, gate, real)
         else:
             l_worst_avoidance, l_best_choice = self.get_label(ind_loss, gate, real)
 
         if self.use_uncertainty:
-            uncertainty = self.get_uncertainty(real, threshold=self.threshold)
+            uncertainty = self.get_uncertainty(real, threshold=self.threshold)[:, :1, :, :].unsqueeze(1)
         else:
             uncertainty = torch.ones_like(gate)
 
@@ -150,7 +146,7 @@ class TESTAM(nn.Module):
                 from copy import deepcopy as cp
                 vals = cp(x)
                 vals[vals <= threshold] = torch.nan
-                diff = vals[:, :, :, :, 1:] - vals[:, :, :, :, :-1]
+                diff = vals[:, :, :, 1:] - vals[:, :, :, :-1]
                 corr_changed = torch.nanmean(torch.abs(diff), dim=-1, keepdim=True) / (
                             nanstd(diff, dim=-1, keepdim=True) + 1e-6)
                 corr_changed[corr_changed != corr_changed] = 0.
